@@ -122,15 +122,18 @@
                 statusDiv.textContent = "正在获取NFT收藏品...";
                 nftListDiv.innerHTML = '';
                 
-                // 这里我们使用Ethereum主网络
+                // 这里我们使用连接的网络
                 const provider = new ethers.providers.Web3Provider(window.ethereum);
                 
-                // 这是一个常见的NFT合约地址列表
-                // 你可以添加你知道自己拥有NFT的合约地址
+                // 获取网络信息
+                const network = await provider.getNetwork();
+                const chainId = network.chainId;
+                console.log("当前连接到的链ID:", chainId);
+                
+                // 使用提供的特定NFT合约地址
                 const nftContracts = [
-                    "0x06012c8cf97BEaD5deAe237070F9587f8E7A266d", // CryptoKitties
-                    "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D", // Bored Ape Yacht Club
-                    // 添加你的NFT合约地址到这个列表
+                    "0xba7995B05B0a7764BB744ab1D09c1850014B7032", // 你的第一个NFT合约
+                    "0x86F77bCb16588753549C34d34748d2E7Ad82Ea8b"  // 你的第二个NFT合约
                 ];
                 
                 let foundNFTs = false;
@@ -146,9 +149,21 @@
                         if (balanceNum > 0) {
                             foundNFTs = true;
                             
-                            // 获取合约名称和符号
-                            const name = await contract.name();
-                            const symbol = await contract.symbol();
+                            // 获取合约名称和符号（捕获可能的错误）
+                            let name, symbol;
+                            try {
+                                name = await contract.name();
+                            } catch (e) {
+                                console.log("无法获取合约名称:", e);
+                                name = "未知名称";
+                            }
+                            
+                            try {
+                                symbol = await contract.symbol();
+                            } catch (e) {
+                                console.log("无法获取合约符号:", e);
+                                symbol = "未知符号";
+                            }
                             
                             for (let i = 0; i < balanceNum; i++) {
                                 try {
