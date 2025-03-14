@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MetaMask NFT检测器</title>
+    <title>MetaMask NFT检测器 (ERC721 & ERC1155)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
     <style>
         body {
@@ -37,13 +37,49 @@
         .nft-item h3 {
             margin-top: 0;
         }
+        .network-selector {
+            margin: 20px 0;
+        }
+        .error {
+            color: #d9534f;
+            font-weight: bold;
+        }
+        .success {
+            color: #5cb85c;
+            font-weight: bold;
+        }
+        .token-type {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .erc721 {
+            background-color: #5bc0de;
+            color: white;
+        }
+        .erc1155 {
+            background-color: #f0ad4e;
+            color: white;
+        }
     </style>
 </head>
 <body>
-    <h1>MetaMask NFT检测器</h1>
-    <p>这个简单的应用将连接到你的MetaMask钱包并显示你拥有的NFT收藏品。</p>
+    <h1>MetaMask NFT检测器 (ERC721 & ERC1155)</h1>
+    <p>这个应用将连接到你的MetaMask钱包并显示你拥有的NFT收藏品，支持ERC721和ERC1155标准。</p>
     
     <button id="connectBtn">连接MetaMask</button>
+    
+    <div class="network-selector">
+        <label for="network">选择网络: </label>
+        <select id="network">
+            <option value="1">以太坊主网</option>
+            <option value="137">Polygon</option>
+            <option value="42161">Arbitrum</option>
+        </select>
+    </div>
     
     <div id="status">请点击上方按钮连接到MetaMask</div>
     
@@ -57,33 +93,72 @@
         const statusDiv = document.getElementById('status');
         const accountInfoDiv = document.getElementById('accountInfo');
         const nftListDiv = document.getElementById('nftList');
+        const networkSelect = document.getElementById('network');
         
-        // ERC-721 接口 ABI (简化版)
+        // ERC721基本ABI
         const ERC721_ABI = [
             "function balanceOf(address owner) view returns (uint256)",
-            "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+            "function ownerOf(uint256 tokenId) view returns (address)",
             "function tokenURI(uint256 tokenId) view returns (string)",
             "function name() view returns (string)",
             "function symbol() view returns (string)"
         ];
         
+        // ERC721Enumerable扩展ABI
+        const ERC721Enumerable_ABI = [
+            ...ERC721_ABI,
+            "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+            "function totalSupply() view returns (uint256)"
+        ];
+        
+        // ERC1155基本ABI
+        const ERC1155_ABI = [
+            "function balanceOf(address account, uint256 id) view returns (uint256)",
+            "function balanceOfBatch(address[] accounts, uint256[] ids) view returns (uint256[])",
+            "function uri(uint256 id) view returns (string)",
+            "function name() view returns (string)",
+            "function symbol() view returns (string)"
+        ];
+        
+        // 设置合约地址和类型
+        const NFT_CONTRACTS = [
+            {
+                address: "0xba7995B05B0a7764BB744ab1D09c1850014B7032",
+                type: "ERC1155"  // 您提到这是ERC1155
+            },
+            {
+                address: "0x86F77bCb16588753549C34d34748d2E7Ad82Ea8b",
+                type: "ERC1155"  // 您提到这是ERC1155
+            }
+        ];
+        
+        // 常见的ERC1155 tokenIds进行检查
+        const COMMON_ERC1155_IDS = [0, 1, 2, 3, 4, 5, 10, 20, 42, 69, 100, 200, 500, 1000];
+        
+        // 网络配置
+        const NETWORKS = {
+            "1": {
+                name: "以太坊主网",
+                explorerUrl: "https://etherscan.io"
+            },
+            "137": {
+                name: "Polygon",
+                explorerUrl: "https://polygonscan.com"
+            },
+            "42161": {
+                name: "Arbitrum",
+                explorerUrl: "https://arbiscan.io"
+            }
+        };
+        
         // 连接MetaMask
         async function connectWallet() {
             try {
-                statusDiv.textContent = "正在连接到MetaMask...";
-                console.log("检测到window.ethereum:", window.ethereum ? "是" : "否");
-                console.log("window.ethereum类型:", typeof window.ethereum);
+                updateStatus("正在连接到MetaMask...", "normal");
                 
                 // 检查MetaMask是否已安装
                 if (typeof window.ethereum === 'undefined') {
-                    statusDiv.textContent = "错误: 请安装MetaMask插件!";
-                    return;
-                }
-                
-                // 检查是否真的是MetaMask
-                const isMetaMask = window.ethereum.isMetaMask;
-                if (!isMetaMask) {
-                    statusDiv.textContent = "错误: 检测到以太坊提供者，但不是MetaMask!";
+                    updateStatus("错误: 请安装MetaMask插件!", "error");
                     return;
                 }
                 
@@ -91,7 +166,7 @@
                 const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
                 const account = accounts[0];
                 
-                statusDiv.textContent = "已连接到MetaMask!";
+                updateStatus("已连接到MetaMask!", "success");
                 accountInfoDiv.innerHTML = `<p><strong>已连接的钱包地址:</strong> ${account}</p>`;
                 
                 // 获取NFT
@@ -104,125 +179,368 @@
                         accountInfoDiv.innerHTML = `<p><strong>已连接的钱包地址:</strong> ${newAccount}</p>`;
                         fetchNFTs(newAccount);
                     } else {
-                        statusDiv.textContent = "已断开与MetaMask的连接";
+                        updateStatus("已断开与MetaMask的连接", "normal");
                         accountInfoDiv.innerHTML = '';
                         nftListDiv.innerHTML = '';
                     }
                 });
                 
+                // 监听网络变化
+                window.ethereum.on('chainChanged', () => {
+                    fetchNFTs(account);
+                });
+                
             } catch (error) {
                 console.error(error);
-                statusDiv.textContent = `错误: ${error.message}`;
+                updateStatus(`错误: ${error.message}`, "error");
             }
+        }
+        
+        // 更新状态显示
+        function updateStatus(message, type = "normal") {
+            statusDiv.textContent = message;
+            statusDiv.className = type;
         }
         
         // 获取NFT收藏品
         async function fetchNFTs(address) {
             try {
-                statusDiv.textContent = "正在获取NFT收藏品...";
+                updateStatus("正在获取NFT收藏品...", "normal");
                 nftListDiv.innerHTML = '';
                 
-                // 这里我们使用连接的网络
                 const provider = new ethers.providers.Web3Provider(window.ethereum);
                 
-                // 获取网络信息
+                // 获取并检查网络
                 const network = await provider.getNetwork();
-                const chainId = network.chainId;
-                console.log("当前连接到的链ID:", chainId);
+                const chainId = network.chainId.toString();
                 
-                // 使用提供的特定NFT合约地址
-                const nftContracts = [
-                    "0xba7995B05B0a7764BB744ab1D09c1850014B7032", // 你的第一个NFT合约
-                    "0x86F77bCb16588753549C34d34748d2E7Ad82Ea8b"  // 你的第二个NFT合约
-                ];
+                // 检查是否是支持的网络
+                if (!NETWORKS[chainId]) {
+                    updateStatus(`当前网络(ChainID: ${chainId})不受支持。请切换到以太坊主网、Polygon或Arbitrum。`, "error");
+                    return;
+                }
+                
+                // 更新网络选择器
+                networkSelect.value = chainId;
                 
                 let foundNFTs = false;
                 
-                for (const contractAddress of nftContracts) {
+                // 检查所有合约
+                for (const contractInfo of NFT_CONTRACTS) {
                     try {
-                        const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
-                        
-                        // 获取用户在此合约中拥有的NFT数量
-                        const balance = await contract.balanceOf(address);
-                        const balanceNum = parseInt(balance.toString());
-                        
-                        if (balanceNum > 0) {
-                            foundNFTs = true;
-                            
-                            // 获取合约名称和符号（捕获可能的错误）
-                            let name, symbol;
-                            try {
-                                name = await contract.name();
-                            } catch (e) {
-                                console.log("无法获取合约名称:", e);
-                                name = "未知名称";
-                            }
-                            
-                            try {
-                                symbol = await contract.symbol();
-                            } catch (e) {
-                                console.log("无法获取合约符号:", e);
-                                symbol = "未知符号";
-                            }
-                            
-                            for (let i = 0; i < balanceNum; i++) {
-                                try {
-                                    // 获取用户拥有的tokenId
-                                    const tokenId = await contract.tokenOfOwnerByIndex(address, i);
-                                    
-                                    // 获取token URI (元数据)
-                                    let tokenURI;
-                                    try {
-                                        tokenURI = await contract.tokenURI(tokenId);
-                                    } catch (e) {
-                                        tokenURI = "无法获取";
-                                    }
-                                    
-                                    // 创建NFT信息显示
-                                    const nftElement = document.createElement('div');
-                                    nftElement.className = 'nft-item';
-                                    nftElement.innerHTML = `
-                                        <h3>${name} #${tokenId}</h3>
-                                        <p><strong>合约地址:</strong> ${contractAddress}</p>
-                                        <p><strong>代币ID:</strong> ${tokenId}</p>
-                                        <p><strong>代币符号:</strong> ${symbol}</p>
-                                        <p><strong>元数据URI:</strong> ${tokenURI}</p>
-                                    `;
-                                    
-                                    nftListDiv.appendChild(nftElement);
-                                } catch (e) {
-                                    console.error(`获取token ${i}失败:`, e);
-                                }
-                            }
+                        if (contractInfo.type === "ERC721") {
+                            // 处理ERC721标准NFT
+                            const found = await checkERC721(contractInfo.address, address, provider);
+                            if (found) foundNFTs = true;
+                        } else if (contractInfo.type === "ERC1155") {
+                            // 处理ERC1155标准NFT
+                            const found = await checkERC1155(contractInfo.address, address, provider);
+                            if (found) foundNFTs = true;
                         }
                     } catch (e) {
-                        console.error(`检查合约 ${contractAddress} 失败:`, e);
+                        console.error(`检查合约 ${contractInfo.address} (${contractInfo.type}) 失败:`, e);
                     }
                 }
                 
-                // 还可以尝试使用外部API检索NFT
-                // 例如OpenSea API或Moralis API
-                
+                // 检查是否找到了NFT
                 if (!foundNFTs) {
-                    // 如果在指定的合约列表中没有找到NFT,可以尝试提供更多信息
                     nftListDiv.innerHTML = `
-                        <p>在检查的合约中没有找到NFT。</p>
-                        <p>可能的原因:</p>
-                        <ul>
-                            <li>你的NFT合约地址不在我们的检查列表中</li>
-                            <li>你的NFT可能在不同的网络上(例如Polygon、Arbitrum等)</li>
-                        </ul>
-                        <p>要检测特定NFT,请修改代码中的nftContracts数组,添加你的NFT合约地址。</p>
+                        <div class="error">
+                            <p>在检查的合约中没有找到NFT。</p>
+                            <p>可能的原因:</p>
+                            <ul>
+                                <li>你的账户中没有这些合约的代币</li>
+                                <li>你的NFT可能在不同的网络上(当前网络: ${NETWORKS[chainId].name})</li>
+                                <li>合约可能使用了非标准的接口</li>
+                            </ul>
+                            <p>请确保:</p>
+                            <ul>
+                                <li>已连接到正确的网络</li>
+                                <li>使用拥有NFT的钱包地址</li>
+                            </ul>
+                        </div>
                     `;
                 }
                 
-                statusDiv.textContent = "NFT检测完成!";
+                updateStatus(`NFT检测完成! 在 ${chainId == 1 ? '以太坊主网' : NETWORKS[chainId].name} 上`, "success");
                 
             } catch (error) {
                 console.error(error);
-                statusDiv.textContent = `获取NFT时出错: ${error.message}`;
+                updateStatus(`获取NFT时出错: ${error.message}`, "error");
             }
         }
+        
+        // 检查ERC721 NFT
+        async function checkERC721(contractAddress, address, provider) {
+            try {
+                // 尝试基本ERC721
+                const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
+                
+                // 获取余额
+                const balance = await contract.balanceOf(address);
+                const balanceNum = parseInt(balance.toString());
+                
+                if (balanceNum > 0) {
+                    let found = false;
+                    
+                    // 尝试用Enumerable扩展获取
+                    try {
+                        const enumContract = new ethers.Contract(contractAddress, ERC721Enumerable_ABI, provider);
+                        const name = await contract.name().catch(() => "未知集合");
+                        const symbol = await contract.symbol().catch(() => "?");
+                        
+                        for (let i = 0; i < Math.min(balanceNum, 50); i++) {
+                            try {
+                                const tokenId = await enumContract.tokenOfOwnerByIndex(address, i);
+                                const displayed = await displayNFT(
+                                    contractAddress, 
+                                    tokenId.toString(), 
+                                    name, 
+                                    symbol, 
+                                    "ERC721",
+                                    provider
+                                );
+                                if (displayed) found = true;
+                            } catch (e) {
+                                console.log("不支持tokenOfOwnerByIndex，尝试其他方法");
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        console.log("不支持ERC721Enumerable扩展");
+                    }
+                    
+                    // 如果上面的方法没有找到，尝试检查常见token IDs
+                    if (!found) {
+                        try {
+                            // 尝试检查是否拥有一些常见tokenId
+                            const name = await contract.name().catch(() => "未知集合");
+                            const symbol = await contract.symbol().catch(() => "?");
+                            
+                            for (let tokenId = 1; tokenId < 100; tokenId++) {
+                                try {
+                                    const owner = await contract.ownerOf(tokenId);
+                                    if (owner.toLowerCase() === address.toLowerCase()) {
+                                        const displayed = await displayNFT(
+                                            contractAddress, 
+                                            tokenId.toString(), 
+                                            name, 
+                                            symbol, 
+                                            "ERC721",
+                                            provider
+                                        );
+                                        if (displayed) found = true;
+                                    }
+                                } catch (e) {
+                                    // 忽略，尝试下一个ID
+                                }
+                            }
+                        } catch (e) {
+                            console.log("检查常见tokenIds失败");
+                        }
+                    }
+                    
+                    return found;
+                }
+                
+                return false;
+            } catch (e) {
+                console.log(`合约 ${contractAddress} 不是ERC721或发生错误:`, e.message);
+                return false;
+            }
+        }
+        
+        // 检查ERC1155 NFT
+        async function checkERC1155(contractAddress, address, provider) {
+            try {
+                // 使用ERC1155 ABI创建合约实例
+                const contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
+                let found = false;
+                
+                // 尝试获取名称和符号（可选）
+                let name = "未知集合";
+                let symbol = "?";
+                
+                try {
+                    name = await contract.name();
+                } catch (e) {
+                    console.log("合约没有name方法");
+                }
+                
+                try {
+                    symbol = await contract.symbol();
+                } catch (e) {
+                    console.log("合约没有symbol方法");
+                }
+                
+                // 尝试常见的tokenIds
+                for (const tokenId of COMMON_ERC1155_IDS) {
+                    try {
+                        const balance = await contract.balanceOf(address, tokenId);
+                        if (balance && !balance.isZero()) {
+                            console.log(`找到ERC1155代币，ID: ${tokenId}, 余额: ${balance.toString()}`);
+                            
+                            const displayed = await displayNFT(
+                                contractAddress, 
+                                tokenId.toString(), 
+                                name, 
+                                symbol, 
+                                "ERC1155",
+                                provider,
+                                balance.toString()
+                            );
+                            
+                            if (displayed) found = true;
+                        }
+                    } catch (e) {
+                        console.log(`检查tokenId ${tokenId}失败:`, e.message);
+                    }
+                }
+                
+                // 尝试获取事件(这是一个高级方法，可能需要更多API支持)
+                try {
+                    // 这里我们使用Transfer事件来查找tokenIds
+                    // 注意：ERC1155使用TransferSingle和TransferBatch事件
+                    const transferFilter = {
+                        address: contractAddress,
+                        topics: [
+                            ethers.utils.id("TransferSingle(address,address,address,uint256,uint256)"),
+                            null,
+                            null,
+                            ethers.utils.hexZeroPad(address, 32)
+                        ]
+                    };
+                    
+                    const transferEvents = await provider.getLogs({
+                        ...transferFilter,
+                        fromBlock: -10000 // 最近的10000个区块
+                    });
+                    
+                    const processedIds = new Set(COMMON_ERC1155_IDS.map(id => id.toString()));
+                    
+                    for (const event of transferEvents) {
+                        // 解析事件日志
+                        const parsedLog = new ethers.utils.Interface([
+                            "event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)"
+                        ]).parseLog(event);
+                        
+                        const tokenId = parsedLog.args.id.toString();
+                        
+                        // 避免重复处理
+                        if (!processedIds.has(tokenId)) {
+                            processedIds.add(tokenId);
+                            
+                            try {
+                                const balance = await contract.balanceOf(address, tokenId);
+                                if (balance && !balance.isZero()) {
+                                    const displayed = await displayNFT(
+                                        contractAddress, 
+                                        tokenId,
+                                        name, 
+                                        symbol, 
+                                        "ERC1155",
+                                        provider,
+                                        balance.toString()
+                                    );
+                                    if (displayed) found = true;
+                                }
+                            } catch (e) {
+                                console.log(`检查事件发现的tokenId ${tokenId}失败`);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log("检索事件失败:", e.message);
+                }
+                
+                return found;
+            } catch (e) {
+                console.log(`合约 ${contractAddress} 不是ERC1155或发生错误:`, e.message);
+                return false;
+            }
+        }
+        
+        // 显示NFT信息
+        async function displayNFT(contractAddress, tokenId, name, symbol, standard, provider, balance = "1") {
+            try {
+                // 获取token URI (元数据)
+                let tokenURI = "无法获取";
+                
+                try {
+                    if (standard === "ERC721") {
+                        const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
+                        tokenURI = await contract.tokenURI(tokenId);
+                    } else if (standard === "ERC1155") {
+                        const contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
+                        tokenURI = await contract.uri(tokenId);
+                        
+                        // ERC1155的URI可能包含{id}占位符
+                        if (tokenURI.includes("{id}")) {
+                            // 转换为16进制并填充到64位
+                            const hexId = ethers.BigNumber.from(tokenId).toHexString().slice(2).padStart(64, '0');
+                            tokenURI = tokenURI.replace("{id}", hexId);
+                        }
+                    }
+                } catch (e) {
+                    console.log(`无法获取tokenURI:`, e);
+                }
+                
+                // 创建NFT信息显示
+                const nftElement = document.createElement('div');
+                nftElement.className = 'nft-item';
+                
+                // 获取当前网络
+                const network = await provider.getNetwork();
+                const chainId = network.chainId.toString();
+                const explorerUrl = NETWORKS[chainId]?.explorerUrl || "https://etherscan.io";
+                
+                // 根据标准显示不同的信息
+                let balanceDisplay = '';
+                if (standard === "ERC1155" && balance !== "1") {
+                    balanceDisplay = `<p><strong>数量:</strong> ${balance}</p>`;
+                }
+                
+                // 显示代币类型标签
+                const standardTag = standard === "ERC721" ? 
+                    '<span class="token-type erc721">ERC721</span>' : 
+                    '<span class="token-type erc1155">ERC1155</span>';
+                
+                nftElement.innerHTML = `
+                    <h3>${name} #${tokenId} ${standardTag}</h3>
+                    <p><strong>合约地址:</strong> 
+                        <a href="${explorerUrl}/address/${contractAddress}" target="_blank">
+                            ${contractAddress}
+                        </a>
+                    </p>
+                    <p><strong>代币ID:</strong> ${tokenId}</p>
+                    <p><strong>代币符号:</strong> ${symbol}</p>
+                    ${balanceDisplay}
+                    <p><strong>元数据URI:</strong> ${tokenURI}</p>
+                `;
+                
+                nftListDiv.appendChild(nftElement);
+                return true;
+            } catch (e) {
+                console.error(`显示NFT失败:`, e);
+                return false;
+            }
+        }
+        
+        // 网络选择变更
+        networkSelect.addEventListener('change', async () => {
+            const chainId = networkSelect.value;
+            
+            try {
+                // 尝试切换网络
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: `0x${parseInt(chainId).toString(16)}` }],
+                });
+            } catch (error) {
+                console.error(`切换网络失败:`, error);
+                updateStatus(`切换网络失败: ${error.message}`, "error");
+            }
+        });
         
         connectBtn.addEventListener('click', connectWallet);
     </script>
